@@ -2,7 +2,7 @@
   "cryptowatchApiKey": "aaaaxxx",
   "ethPrivKey": "0x000f...f4",
   "zigzagChainId": 42161,
-  "zigzagWsUrl": "wss://zigzag-exchange.herokuapp.com",
+  "zigzagHttps": "https://api.arbitrum.zigzag.exchange",
   "vault": {
     "address": "0x341fe..32b",
     "depositFee": 0,
@@ -24,11 +24,6 @@
         "priceFeedSecondary": null,
         "active": true
       },
-      "ZZ": {
-        "priceFeedPrimary": "cryptowatch:6631",
-        "priceFeedSecondary": null,
-        "active": true
-      }
     }
   },
   "pairs": {
