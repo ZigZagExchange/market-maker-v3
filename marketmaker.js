@@ -9,10 +9,10 @@ dotenv.config();
 // Globals
 const PRICE_FEEDS = {};
 const BALANCES = {};
-const MARKETS = {};
 const CHAINLINK_PROVIDERS = {};
 const UNISWAP_V3_PROVIDERS = {};
 const TOKEN_INFO = {};
+let EXCHANGE_INFO = {};
 
 let uniswap_error_counter = 0;
 let chainlink_error_counter = 0;
@@ -71,20 +71,30 @@ const [VAULT_DECIMALS] = VAULT_TOKEN_ADDRESS ? await Promise.all([
   VAULT_CONTRACT.decimals()
 ]) : [0, 0];
 
-
 // Start price feeds
 await setupPriceFeeds();
 await getTokenInfo(activePairs);
+await getExchangeInfo();
+await getBalances();
 
 // Update account state loop
 setInterval(getBalances, 5000);
-setInterval(sendOrders, 2000); 
+setInterval(sendOrders, 2000);
+setInterval(getExchangeInfo, 5 * 60 * 1000);
+
+async function getExchangeInfo() {
+  const response = await fetch(MM_CONFIG.zigzagHttps + "/v1/info");
+  if (response.status !== 200) return;
+  const result = await response.json();
+
+  EXCHANGE_INFO = result.exchange;
+}
 
 async function getTokenInfo(activePairs) {
-  for(let i = 0; i < activePairs.length; i++) {
+  for (let i = 0; i < activePairs.length; i++) {
     const pair = activePairs[i];
     const tokens = pair.split('-');
-    for(let j = 0; j < 2; j++) {
+    for (let j = 0; j < 2; j++) {
       const tokenAddress = tokens[j];
       if (TOKEN_INFO[tokenAddress]) continue
       const contract = new ethers.Contract(tokenAddress, ERC20ABI, rollupProvider);
@@ -498,7 +508,7 @@ async function sendOrders(pairs = MM_CONFIG.pairs) {
           expires
         );
       }
-    }    
+    }
   }
 
   if (VAULT_TOKEN_ADDRESS) {
@@ -610,11 +620,11 @@ async function signAndSendOrder(
   }
 
   const makerVolumeFeeBN = sellAmountBN
-    .mul(0)
-    .div(100);
+    .mul(EXCHANGE_INFO.makerVolumeFee * 10000)
+    .div(10000);
   const takerVolumeFeeBN = sellAmountBN
-    .mul(5)
-    .div(100);
+    .mul(EXCHANGE_INFO.takerVolumeFee * 10000)
+    .div(10000);
 
   const userAccount = await getMMBotAccount();
   let domain, Order, types;
@@ -644,25 +654,7 @@ async function signAndSendOrder(
     expirationTimeSeconds: expirationTimeSeconds.toFixed(0),
   };
 
-  domain = {
-    name: "ZigZag",
-    version: "2.1",
-    chainId: CHAIN_ID,
-    verifyingContract: "0x20e7FCC377CB96805c6Ae8dDE7BB302b344dc42f",
-  };
-
-  types = {
-    Order: [
-      { name: "user", type: "address" },
-      { name: "sellToken", type: "address" },
-      { name: "buyToken", type: "address" },
-      { name: "sellAmount", type: "uint256" },
-      { name: "buyAmount", type: "uint256" },
-      { name: "expirationTimeSeconds", type: "uint256" },
-    ],
-  };
-
-  const signature = await WALLET._signTypedData(domain, types, Order);
+  const signature = await WALLET._signTypedData(EXCHANGE_INFO.domain, EXCHANGE_INFO.types, Order);
 
   const res = await fetch(MM_CONFIG.zigzagHttps + "/v1/order", {
     method: 'POST',
@@ -674,11 +666,6 @@ async function signAndSendOrder(
     })
   }).then(response => response.json());
   console.log(res)
-}
-
-function getExchangeAddress() {
-  const marketInfo = Object.values(MARKETS)[0];
-  return marketInfo?.exchangeAddress;
 }
 
 function getTokens() {
@@ -697,16 +684,11 @@ function getTokens() {
   return [...tokens];
 }
 
-function getPairs() {
-  return Object.keys(MARKETS);
-}
-
 async function getBalances() {
-  const contractAddress = getExchangeAddress();
   const tokens = getTokens();
   for (let i = 0; i < tokens.length; i++) {
     const tokenAddress = tokens[i];
-    BALANCES[tokenAddress] = await getBalanceOfToken(tokenAddress, contractAddress);
+    BALANCES[tokenAddress] = await getBalanceOfToken(tokenAddress, EXCHANGE_INFO.exchangeAddress);
   }
 }
 
