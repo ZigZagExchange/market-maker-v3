@@ -83,11 +83,16 @@ setInterval(sendOrders, 2000);
 setInterval(getExchangeInfo, 5 * 60 * 1000);
 
 async function getExchangeInfo() {
-  const response = await fetch(MM_CONFIG.zigzagHttps + "/v1/info");
-  if (response.status !== 200) return;
-  const result = await response.json();
+  try {
+    const response = await fetch(MM_CONFIG.zigzagHttps + "/v1/info");
+    if (response.status !== 200) return;
+    const result = await response.json();
 
-  EXCHANGE_INFO = result.exchange;
+    EXCHANGE_INFO = result.exchange;
+  } catch (e) {
+    console.error(`Failed to getExchangeInfo, because: ${e.message}`)
+    throw new Error(e)
+  }
 }
 
 async function getTokenInfo(activePairs) {
@@ -97,17 +102,22 @@ async function getTokenInfo(activePairs) {
     for (let j = 0; j < 2; j++) {
       const tokenAddress = tokens[j];
       if (TOKEN_INFO[tokenAddress]) continue
-      const contract = new ethers.Contract(tokenAddress, ERC20ABI, rollupProvider);
-      const [decimalsRes, nameRes, symbolRes] = await Promise.all([
-        contract.decimals(),
-        contract.name(),
-        contract.symbol()
-      ]);
-      TOKEN_INFO[tokenAddress] = {
-        address: tokenAddress,
-        decimals: decimalsRes,
-        name: nameRes,
-        symbol: symbolRes
+      try {
+        const contract = new ethers.Contract(tokenAddress, ERC20ABI, rollupProvider);
+        const [decimalsRes, nameRes, symbolRes] = await Promise.all([
+          contract.decimals(),
+          contract.name(),
+          contract.symbol()
+        ]);
+        TOKEN_INFO[tokenAddress] = {
+          address: tokenAddress,
+          decimals: decimalsRes,
+          name: nameRes,
+          symbol: symbolRes
+        }        
+      } catch (e) {
+        console.error(`Failed to getTokenInfo for ${pair}, ${tokens}, because: ${e.message}`)
+        throw new Error(e)
       }
     }
   }
@@ -687,8 +697,13 @@ function getTokens() {
 async function getBalances() {
   const tokens = getTokens();
   for (let i = 0; i < tokens.length; i++) {
-    const tokenAddress = tokens[i];
-    BALANCES[tokenAddress] = await getBalanceOfToken(tokenAddress, EXCHANGE_INFO.exchangeAddress);
+    try {  
+      const tokenAddress = tokens[i];
+      BALANCES[tokenAddress] = await getBalanceOfToken(tokenAddress, EXCHANGE_INFO.exchangeAddress);
+    } catch (e) {
+      console.error(`Failed to getBalances for ${tokenAddress}, because: ${e.message}`)
+      throw new Error(e)
+    }
   }
 }
 
@@ -730,7 +745,7 @@ async function getBalanceOfToken(tokenAddress, contractAddress) {
 
     return result;
   } catch (e) {
-    console.log(e);
+    console.error(e);
     return result;
   }
 }
