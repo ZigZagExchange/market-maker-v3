@@ -666,16 +666,29 @@ async function signAndSendOrder(
 
   const signature = await WALLET._signTypedData(EXCHANGE_INFO.domain, EXCHANGE_INFO.types, Order);
 
-  const res = await fetch(MM_CONFIG.zigzagHttps + "/v1/order", {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      order: Order,
-      signature: signature,
-      user: userAccount
-    })
-  }).then(response => response.json());
-  console.log(res)
+  if (VAULT_TOKEN_ADDRESS) {
+    const res = await fetch(MM_CONFIG.zigzagHttps + "/v1/order", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        order: Order,
+        signature: signature,
+        signer: userAccount
+      })
+    }).then(response => response.json());
+    console.log(res)
+  } else {
+    const res = await fetch(MM_CONFIG.zigzagHttps + "/v1/order", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        order: Order,
+        signature: signature,
+        user: userAccount
+      })
+    }).then(response => response.json());
+    console.log(res)
+  }  
 }
 
 function getTokens() {
