@@ -114,7 +114,7 @@ async function getTokenInfo(activePairs) {
           decimals: decimalsRes,
           name: nameRes,
           symbol: symbolRes
-        }        
+        }
       } catch (e) {
         console.error(`Failed to getTokenInfo for ${pair}, ${tokens}, because: ${e.message}`)
         throw new Error(e)
@@ -443,7 +443,10 @@ async function sendOrders(pairs = MM_CONFIG.pairs) {
   const expires = ((Date.now() / 1000) | 0) + 20; // 15s expiry
   for (const marketId in pairs) {
     const mmConfig = pairs[marketId];
-    if (!mmConfig || !mmConfig.active) continue;
+    if (!mmConfig || !mmConfig.active) {
+      console.error(`Missing mmConfig for sendOrders ${marketId}`);
+      continue;
+    }
 
     let price;
     try {
@@ -456,10 +459,16 @@ async function sendOrders(pairs = MM_CONFIG.pairs) {
     const [baseTokenAddress, quoteTokenAddress] = marketId.split('-')
     const baseTokenInfo = TOKEN_INFO[baseTokenAddress]
     const quoteTokenInfo = TOKEN_INFO[quoteTokenAddress]
-    if (!baseTokenInfo || !quoteTokenInfo) continue;
+    if (!baseTokenInfo || !quoteTokenInfo) {
+      console.error(`Missing baseTokenInfo or quoteTokenInfo for sendOrders ${marketId}`);
+      continue;
+    }
 
     const midPrice = mmConfig.invert ? 1 / price : price;
-    if (!midPrice) continue;
+    if (!midPrice) {
+      console.error(`Missing midPrice for sendOrders ${marketId}`);
+      continue;
+    }
 
     const side = mmConfig.side || "d";
     const maxBaseBalance = BALANCES[baseTokenAddress].value;
@@ -486,7 +495,6 @@ async function sendOrders(pairs = MM_CONFIG.pairs) {
     if (usdBaseBalance && usdBaseBalance < 10 * sellSplits)
       sellSplits = Math.floor(usdBaseBalance / 10);
 
-    let orderArray = [];
     for (let i = 1; i <= buySplits; i++) {
       const buyPrice =
         midPrice *
@@ -616,14 +624,14 @@ async function signAndSendOrder(
 
   let sellToken, buyToken, sellAmountBN, buyAmountBN, balanceBN;
   if (side === "s") {
-    sellToken = baseTokenInfo.address;
-    buyToken = quoteTokenInfo.address;
+    sellToken = baseTokenInfo.address.toLowerCase();
+    buyToken = quoteTokenInfo.address.toLowerCase();
     sellAmountBN = baseAmountBN;
     buyAmountBN = quoteAmountBN;
     balanceBN = BALANCES[baseTokenAddress].value;
   } else {
-    sellToken = quoteTokenInfo.address;
-    buyToken = baseTokenInfo.address;
+    sellToken = quoteTokenInfo.address.toLowerCase();
+    buyToken = baseTokenInfo.address.toLowerCase();
     sellAmountBN = quoteAmountBN;
     buyAmountBN = baseAmountBN;
     balanceBN = BALANCES[quoteTokenAddress].value;
@@ -710,7 +718,7 @@ function getTokens() {
 async function getBalances() {
   const tokens = getTokens();
   for (let i = 0; i < tokens.length; i++) {
-    try {  
+    try {
       const tokenAddress = tokens[i];
       BALANCES[tokenAddress] = await getBalanceOfToken(tokenAddress, EXCHANGE_INFO.exchangeAddress);
     } catch (e) {
