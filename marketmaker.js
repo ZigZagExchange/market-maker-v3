@@ -681,7 +681,7 @@ async function signAndSendOrder(
       body: JSON.stringify({
         order: Order,
         signature: signature,
-        signer: userAccount
+        signer: WALLET.address
       })
     }).then(response => response.json());
     console.log(res)
