@@ -78,8 +78,12 @@ await getExchangeInfo();
 await getBalances();
 
 // Update account state loop
+const sendOrdersInterval = 2000
+const sendOrdersVaultInterval = 300000
+
 setInterval(getBalances, 5000);
-setInterval(sendOrders, 2000);
+setInterval(sendOrders, sendOrdersInterval);
+if (VAULT_TOKEN_ADDRESS) setInterval(sendOrdersVault, sendOrdersVaultInterval);
 setInterval(getExchangeInfo, 5 * 60 * 1000);
 
 async function getExchangeInfo() {
@@ -440,7 +444,7 @@ async function uniswapV3Update() {
 }
 
 async function sendOrders(pairs = MM_CONFIG.pairs) {
-  const expires = ((Date.now() / 1000) | 0) + 20; // 15s expiry
+  const expires = ((Date.now() + sendOrdersInterval * 1.05) / 1000 ) | 0;
   for (const marketId in pairs) {
     const mmConfig = pairs[marketId];
     if (!mmConfig || !mmConfig.active) {
@@ -529,52 +533,57 @@ async function sendOrders(pairs = MM_CONFIG.pairs) {
     }
   }
 
-  if (VAULT_TOKEN_ADDRESS) {
-    try {
-      const usdHoldings = await _getHoldingsInUSD();
-      const LPTokenDistributedBN = await VAULT_CONTRACT.circulatingSupply();
-      const LPTokenDistributed = Number(ethers.utils.formatUnits(LPTokenDistributedBN, VAULT_DECIMALS));
-      const trueLPTokenValue = LPTokenDistributed ? usdHoldings / LPTokenDistributed : VAULT_INITIAL_PRICE;
+  
+}
 
-      // generate LP orders for each valid token
-      const result = VAULT_DEPOSIT_TOKENS.map(async (tokenAddress) => {
-        // only show orders for active pairs
-        if (!MM_CONFIG.vault.depositTokens[tokenAddress].active) return;
-        const priceFeedKey = MM_CONFIG.vault.depositTokens[tokenAddress].priceFeedPrimary;
+async function sendOrdersVault() {
+  if (!VAULT_TOKEN_ADDRESS) return
 
-        const market = `${VAULT_TOKEN_ADDRESS}-${tokenAddress}`;
-        const tokenInfo = TOKEN_INFO[tokenAddress];
-        if (!tokenInfo) return;
+  try {
+    const expires = ((Date.now() + sendOrdersVaultInterval * 1.02) / 1000) | 0;
+    const usdHoldings = await _getHoldingsInUSD();
+    const LPTokenDistributedBN = await VAULT_CONTRACT.circulatingSupply();
+    const LPTokenDistributed = Number(ethers.utils.formatUnits(LPTokenDistributedBN, VAULT_DECIMALS));
+    const trueLPTokenValue = LPTokenDistributed ? usdHoldings / LPTokenDistributed : VAULT_INITIAL_PRICE;
 
-        // calculate the LP token price for this token
-        const tokenPrice = getValidatedPriceDepositToken(token)
-        const LPPriceInKind = trueLPTokenValue / tokenPrice;
+    // generate LP orders for each valid token
+    const result = VAULT_DEPOSIT_TOKENS.map(async (tokenAddress) => {
+      // only show orders for active pairs
+      if (!MM_CONFIG.vault.depositTokens[tokenAddress].active) return;
+      const priceFeedKey = MM_CONFIG.vault.depositTokens[tokenAddress].priceFeedPrimary;
 
-        const amountDeposit = ethers.utils.formatUnits(BALANCES[VAULT_TOKEN_ADDRESS].value, VAULT_DECIMALS);
-        if (!amountDeposit) return;
-        signAndSendOrder(
-          market,
-          's',
-          LPPriceInKind * (1 + VAULT_DEPOSIT_FEE),
-          amountDeposit,
-          expires
-        );
+      const market = `${VAULT_TOKEN_ADDRESS}-${tokenAddress}`;
+      const tokenInfo = TOKEN_INFO[tokenAddress];
+      if (!tokenInfo) return;
 
-        const amountWithdraw = ethers.utils.formatUnits(BALANCES[token].value, tokenInfo.decimals);
-        if (!amountWithdraw) return;
-        const withdrawPrice = LPPriceInKind * (1 - VAULT_WITHDRAW_FEE);
-        signAndSendOrder(
-          market,
-          'b',
-          withdrawPrice,
-          amountWithdraw / withdrawPrice,
-          expires
-        );
-      });
-      await Promise.all(result);
-    } catch (e) {
-      console.log(`Could not send LP token offers: ${e.message}`);
-    }
+      // calculate the LP token price for this token
+      const tokenPrice = getValidatedPriceDepositToken(token)
+      const LPPriceInKind = trueLPTokenValue / tokenPrice;
+
+      const amountDeposit = ethers.utils.formatUnits(BALANCES[VAULT_TOKEN_ADDRESS].value, VAULT_DECIMALS);
+      if (!amountDeposit) return;
+      signAndSendOrder(
+        market,
+        's',
+        LPPriceInKind * (1 + VAULT_DEPOSIT_FEE),
+        amountDeposit,
+        expires
+      );
+
+      const amountWithdraw = ethers.utils.formatUnits(BALANCES[token].value, tokenInfo.decimals);
+      if (!amountWithdraw) return;
+      const withdrawPrice = LPPriceInKind * (1 - VAULT_WITHDRAW_FEE);
+      signAndSendOrder(
+        market,
+        'b',
+        withdrawPrice,
+        amountWithdraw / withdrawPrice,
+        expires
+      );
+    });
+    await Promise.all(result);
+  } catch (e) {
+    console.log(`Could not send LP token offers: ${e.message}`);
   }
 }
 
