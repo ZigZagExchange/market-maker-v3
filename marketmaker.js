@@ -78,11 +78,10 @@ await getExchangeInfo();
 await getBalances();
 
 // Update account state loop
-const sendOrdersInterval = 2000
-const sendOrdersVaultInterval = 300000
+const sendOrdersVaultInterval = 150000
 
 setInterval(getBalances, 5000);
-setInterval(sendOrders, sendOrdersInterval);
+setInterval(sendOrders, 2000);
 if (VAULT_TOKEN_ADDRESS) setInterval(sendOrdersVault, sendOrdersVaultInterval);
 setInterval(getExchangeInfo, 5 * 60 * 1000);
 
@@ -444,7 +443,7 @@ async function uniswapV3Update() {
 }
 
 async function sendOrders(pairs = MM_CONFIG.pairs) {
-  const expires = ((Date.now() + sendOrdersInterval * 1.05) / 1000 ) | 0;
+  const expires = ((Date.now() / 1000) | 0) + 15;
   for (const marketId in pairs) {
     const mmConfig = pairs[marketId];
     if (!mmConfig || !mmConfig.active) {
@@ -540,7 +539,7 @@ async function sendOrdersVault() {
   if (!VAULT_TOKEN_ADDRESS) return
 
   try {
-    const expires = ((Date.now() + sendOrdersVaultInterval * 1.02) / 1000) | 0;
+    const expires = ((Date.now() + sendOrdersVaultInterval * 2) / 1000) | 0;
     const usdHoldings = await _getHoldingsInUSD();
     const LPTokenDistributedBN = await VAULT_CONTRACT.circulatingSupply();
     const LPTokenDistributed = Number(ethers.utils.formatUnits(LPTokenDistributedBN, VAULT_DECIMALS));
