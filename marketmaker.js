@@ -28,14 +28,7 @@ if (process.env.MM_CONFIG) {
   const mmConfigFile = fs.readFileSync("config.json", "utf8");
   MM_CONFIG = JSON.parse(mmConfigFile);
 }
-let activePairs = [];
-for (let marketId in MM_CONFIG.pairs) {
-  const pair = MM_CONFIG.pairs[marketId];
-  if (pair.active) {
-    activePairs.push(marketId);
-  }
-}
-console.log("ACTIVE PAIRS", activePairs);
+
 const CHAIN_ID = parseInt(MM_CONFIG.zigzagChainId);
 const VAULT_TOKEN_ADDRESS = MM_CONFIG.vault && MM_CONFIG.vault.address;
 const VAULT_DEPOSIT_TOKENS = VAULT_TOKEN_ADDRESS ? Object.keys(MM_CONFIG.vault.depositTokens) : [];
@@ -46,6 +39,20 @@ const VAULT_INITIAL_PRICE = VAULT_TOKEN_ADDRESS ? MM_CONFIG.vault.initialPrice :
 if (VAULT_TOKEN_ADDRESS && !VAULT_DEPOSIT_TOKENS) {
   throw new Error('vault need deposit token list')
 }
+
+let activePairs = [];
+for (let marketId in MM_CONFIG.pairs) {
+  const pair = MM_CONFIG.pairs[marketId];
+  if (pair.active) {
+    activePairs.push(marketId);
+  }
+}
+if (VAULT_TOKEN_ADDRESS) {
+  for (let tokenAddress in MM_CONFIG.vault.depositTokens) {
+    activePairs.push(VAULT_TOKEN_ADDRESS + "-" + tokenAddress);
+  }
+}
+console.log("ACTIVE PAIRS", activePairs);
 
 const infuraID = MM_CONFIG.infura ? MM_CONFIG.infura : process.env.INFURA;
 
@@ -78,11 +85,14 @@ await getExchangeInfo();
 await getBalances();
 
 // Update account state loop
-const sendOrdersVaultInterval = 150000
+const sendOrdersVaultInterval = 30000
 
 setInterval(getBalances, 5000);
 setInterval(sendOrders, 2000);
-if (VAULT_TOKEN_ADDRESS) setInterval(sendOrdersVault, sendOrdersVaultInterval);
+if (VAULT_TOKEN_ADDRESS) {
+  sendOrdersVault();
+  setInterval(sendOrdersVault, sendOrdersVaultInterval);
+}
 setInterval(getExchangeInfo, 5 * 60 * 1000);
 
 async function getExchangeInfo() {
@@ -104,7 +114,7 @@ async function getTokenInfo(activePairs) {
     const tokens = pair.split('-');
     for (let j = 0; j < 2; j++) {
       const tokenAddress = tokens[j];
-      if (TOKEN_INFO[tokenAddress]) continue
+      if (TOKEN_INFO[tokenAddress.toLowerCase()]) continue
       try {
         const contract = new ethers.Contract(tokenAddress, ERC20ABI, rollupProvider);
         const [decimalsRes, nameRes, symbolRes] = await Promise.all([
@@ -112,7 +122,7 @@ async function getTokenInfo(activePairs) {
           contract.name(),
           contract.symbol()
         ]);
-        TOKEN_INFO[tokenAddress] = {
+        TOKEN_INFO[tokenAddress.toLowerCase()] = {
           address: tokenAddress,
           decimals: decimalsRes,
           name: nameRes,
@@ -272,6 +282,7 @@ async function cryptowatchWsSetup(cryptowatchMarketIds) {
       PRICE_FEEDS["cryptowatch:" + cryptowatchMarketIds[i]] =
         cryptowatchMarketPrices.result[key];
     } catch (e) {
+      console.error(e);
       console.error(
         "Could not set price feed for cryptowatch:" + cryptowatchMarketId
       );
@@ -460,8 +471,8 @@ async function sendOrders(pairs = MM_CONFIG.pairs) {
     }
 
     const [baseTokenAddress, quoteTokenAddress] = marketId.split('-')
-    const baseTokenInfo = TOKEN_INFO[baseTokenAddress]
-    const quoteTokenInfo = TOKEN_INFO[quoteTokenAddress]
+    const baseTokenInfo = TOKEN_INFO[baseTokenAddress.toLowerCase()]
+    const quoteTokenInfo = TOKEN_INFO[quoteTokenAddress.toLowerCase()]
     if (!baseTokenInfo || !quoteTokenInfo) {
       console.error(`Missing baseTokenInfo or quoteTokenInfo for sendOrders ${marketId}`);
       continue;
@@ -552,11 +563,11 @@ async function sendOrdersVault() {
       const priceFeedKey = MM_CONFIG.vault.depositTokens[tokenAddress].priceFeedPrimary;
 
       const market = `${VAULT_TOKEN_ADDRESS}-${tokenAddress}`;
-      const tokenInfo = TOKEN_INFO[tokenAddress];
+      const tokenInfo = TOKEN_INFO[tokenAddress.toLowerCase()];
       if (!tokenInfo) return;
 
       // calculate the LP token price for this token
-      const tokenPrice = getValidatedPriceDepositToken(token)
+      const tokenPrice = getValidatedPriceDepositToken(tokenAddress)
       const LPPriceInKind = trueLPTokenValue / tokenPrice;
 
       const amountDeposit = ethers.utils.formatUnits(BALANCES[VAULT_TOKEN_ADDRESS].value, VAULT_DECIMALS);
@@ -569,7 +580,7 @@ async function sendOrdersVault() {
         expires
       );
 
-      const amountWithdraw = ethers.utils.formatUnits(BALANCES[token].value, tokenInfo.decimals);
+      const amountWithdraw = ethers.utils.formatUnits(BALANCES[tokenAddress].value, tokenInfo.decimals);
       if (!amountWithdraw) return;
       const withdrawPrice = LPPriceInKind * (1 - VAULT_WITHDRAW_FEE);
       signAndSendOrder(
@@ -583,19 +594,20 @@ async function sendOrdersVault() {
     await Promise.all(result);
   } catch (e) {
     console.log(`Could not send LP token offers: ${e.message}`);
+    console.error(e);
   }
 }
 
 async function _getHoldingsInUSD() {
   const tokenAddresses = Object.keys(BALANCES);
   let usdHoldings = 0;
-  for (let i = 0; i < tokens.length; i++) {
+  for (let i = 0; i < tokenAddresses.length; i++) {
     const tokenAddress = tokenAddresses[i];
 
     // dont count the minted, but not distributed LP tokens
     if (tokenAddress === VAULT_TOKEN_ADDRESS) continue;
 
-    const tokenInfo = TOKEN_INFO[tokenAddress];
+    const tokenInfo = TOKEN_INFO[tokenAddress.toLowerCase()];
     if (!tokenInfo) continue;
 
     const amount = ethers.utils.formatUnits(BALANCES[tokenAddress].value.toString(), tokenInfo.decimals);
@@ -614,8 +626,8 @@ async function signAndSendOrder(
   expirationTimeSeconds
 ) {
   const [baseTokenAddress, quoteTokenAddress] = marketId.split('-')
-  const baseTokenInfo = TOKEN_INFO[baseTokenAddress]
-  const quoteTokenInfo = TOKEN_INFO[quoteTokenAddress]
+  const baseTokenInfo = TOKEN_INFO[baseTokenAddress.toLowerCase()]
+  const quoteTokenInfo = TOKEN_INFO[quoteTokenAddress.toLowerCase()]
   if (!baseTokenInfo || !quoteTokenInfo) return
 
   const baseAmount = size;
@@ -645,22 +657,8 @@ async function signAndSendOrder(
     balanceBN = BALANCES[quoteTokenAddress].value;
   }
 
-  const makerVolumeFeeBN = sellAmountBN
-    .mul(EXCHANGE_INFO.makerVolumeFee * 10000)
-    .div(10000);
-  const takerVolumeFeeBN = sellAmountBN
-    .mul(EXCHANGE_INFO.takerVolumeFee * 10000)
-    .div(10000);
-
   const userAccount = await getMMBotAccount();
   let domain, Order, types;
-
-  // size check
-  if (makerVolumeFeeBN.gte(takerVolumeFeeBN)) {
-    balanceBN = balanceBN.sub(makerVolumeFeeBN);
-  } else {
-    balanceBN = balanceBN.sub(takerVolumeFeeBN);
-  }
 
   if (balanceBN.lte(0)) return null;
 
@@ -692,7 +690,6 @@ async function signAndSendOrder(
         signer: WALLET.address
       })
     }).then(response => response.json());
-    console.log(res)
   } else {
     const res = await fetch(MM_CONFIG.zigzagHttps + "/v1/order", {
       method: 'POST',
@@ -703,8 +700,12 @@ async function signAndSendOrder(
         user: userAccount
       })
     }).then(response => response.json());
-    console.log(res)
   }  
+  const sellTokenInfo = TOKEN_INFO[sellToken.toLowerCase()]
+  const buyTokenInfo = TOKEN_INFO[buyToken.toLowerCase()]
+  const sellAmountReadable = Order.sellAmount / 10**sellTokenInfo.decimals;
+  const buyAmountReadable = Order.buyAmount / 10**buyTokenInfo.decimals;
+  console.log("Sell", sellAmountReadable, sellTokenInfo.symbol, ", Buy", buyAmountReadable, buyTokenInfo.symbol, ", Price", buyAmountReadable /  sellAmountReadable, sellAmountReadable / buyAmountReadable);
 }
 
 function getTokens() {
@@ -747,7 +748,7 @@ async function getBalanceOfToken(tokenAddress, contractAddress) {
       result.allowance = ethers.constants.MaxUint256;
       return result;
     }
-    const tokenInfo = TOKEN_INFO[tokenAddress];
+    const tokenInfo = TOKEN_INFO[tokenAddress.toLowerCase()];
 
     if (!tokenInfo || !tokenInfo.address) return result;
 
