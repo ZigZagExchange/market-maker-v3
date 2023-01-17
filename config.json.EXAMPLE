@@ -1,6 +1,4 @@
 {
-  "cryptowatchApiKey": "xxxxxx",
-  "ethPrivKey": "xxxxxx",
   "zigzagChainId": 42161,
   "zigzagHttps": "https://api.arbitrum.zigzag.exchange",
   "pairs": {

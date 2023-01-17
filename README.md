@@ -54,21 +54,18 @@ and set it to the value of the `MM_CONFIG` environment variable to override the 
 ## Settings
 
 #### Mainnet arbitrum
-- "zigzagWsUrl": "wss://zigzag-exchange.herokuapp.com"
+- "zigzagHttpsUrl": "https://api.arbitrum.zigzag.exchange"
 - "zigzagChainId": 42161
-
-#### Goerli arbitrum
-- "zigzagWsUrl": "wss://secret-thicket-93345.herokuapp.com"
-- "zigzagChainId": 421613
 
 You can add, remove, and configure pair settings in the `pairs` section. A pair setting looks like this:
 
 ```json
-"ETH-USDC": {
+"0x82aF49447D8a07e3bd95BD0d56f35241523fBab1-0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8": {
+    "nickname": "WETH-USDC",
     "mode": "pricefeed",
     "side": "d",
     "initPrice": null,
-    "priceFeedPrimary": "cryptowatch:6631",
+    "priceFeedPrimary": "cryptowatch:4",
     "priceFeedSecondary": "cryptowatch:588",
     "slippageRate": 1e-5,
     "maxSize": 100,
