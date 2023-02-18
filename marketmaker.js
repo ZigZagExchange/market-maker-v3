@@ -458,7 +458,9 @@ async function sendOrders(pairs = MM_CONFIG.pairs) {
   for (const marketId in pairs) {
     const mmConfig = pairs[marketId];
     if (!mmConfig || !mmConfig.active) {
-      console.error(`Missing mmConfig for sendOrders ${marketId}`);
+      if(!mmConfig) {
+        console.error(`Missing mmConfig for sendOrders ${marketId}`);
+      }
       continue;
     }
 
