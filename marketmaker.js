@@ -682,26 +682,30 @@ async function signAndSendOrder(
 
   const signature = await WALLET._signTypedData(EXCHANGE_INFO.domain, EXCHANGE_INFO.types, Order);
 
-  if (VAULT_TOKEN_ADDRESS) {
-    const res = await fetch(MM_CONFIG.zigzagHttps + "/v1/order", {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        order: Order,
-        signature: signature,
-        signer: WALLET.address
+  try {
+    if (VAULT_TOKEN_ADDRESS) {
+      await fetch(MM_CONFIG.zigzagHttps + "/v1/order", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          order: Order,
+          signature: signature,
+          signer: WALLET.address
+        })
       })
-    }).then(response => response.json());
-  } else {
-    const res = await fetch(MM_CONFIG.zigzagHttps + "/v1/order", {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        order: Order,
-        signature: signature,
-        user: userAccount
+    } else {
+      await fetch(MM_CONFIG.zigzagHttps + "/v1/order", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          order: Order,
+          signature: signature,
+          user: userAccount
+        })
       })
-    }).then(response => response.json());
+    }
+  } catch (err) {
+    console.warn('Failed to send orders')
   }  
   const sellTokenInfo = TOKEN_INFO[sellToken.toLowerCase()]
   const buyTokenInfo = TOKEN_INFO[buyToken.toLowerCase()]
