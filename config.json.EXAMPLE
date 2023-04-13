@@ -10,7 +10,8 @@
       "maxSize": 100,
       "minSize": 0.0003,
       "minSpread": 0.0005,
-      "active": true
+      "active": true,
+      "expirationTimeSeconds": 30
     }
   }
 }

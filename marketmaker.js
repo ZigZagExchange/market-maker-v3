@@ -35,7 +35,6 @@ const VAULT_DEPOSIT_TOKENS = VAULT_TOKEN_ADDRESS ? Object.keys(MM_CONFIG.vault.d
 const VAULT_DEPOSIT_FEE = VAULT_TOKEN_ADDRESS ? MM_CONFIG.vault.depositFee : 0.01; // default != 0 to prevent arb
 const VAULT_WITHDRAW_FEE = VAULT_TOKEN_ADDRESS ? MM_CONFIG.vault.withdrawFee : 0.01; // default != 0 to prevent arb
 const VAULT_INITIAL_PRICE = VAULT_TOKEN_ADDRESS ? MM_CONFIG.vault.initialPrice : 1;
-
 if (VAULT_TOKEN_ADDRESS && !VAULT_DEPOSIT_TOKENS) {
   throw new Error('vault need deposit token list')
 }
@@ -85,15 +84,24 @@ await getExchangeInfo();
 await getBalances();
 
 // Update account state loop
-const sendOrdersVaultInterval = 30000
-
 setInterval(getBalances, 5000);
-setInterval(sendOrders, 2000);
+
+const sendOrdersVaultInterval = 30000
 if (VAULT_TOKEN_ADDRESS) {
   sendOrdersVault();
   setInterval(sendOrdersVault, sendOrdersVaultInterval);
 }
-setInterval(getExchangeInfo, 5 * 60 * 1000);
+
+for (const marketId in MM_CONFIG.pairs) {
+  const pairConfig = MM_CONFIG.pairs[marketId];
+  const expires = Math.max(pairConfig.expirationTimeSeconds || 30, 12.5)
+
+  // the FE uses a 10 sec min to fetch new orders
+  const interval = expires - 10.5;
+  if (pairConfig.active) setInterval(sendOrders, interval * 1000, marketId);
+}
+
+setInterval(getExchangeInfo, 1 * 60 * 1000);
 
 async function getExchangeInfo() {
   try {
@@ -453,15 +461,13 @@ async function uniswapV3Update() {
   }
 }
 
-async function sendOrders(pairs = MM_CONFIG.pairs) {
-  const expires = ((Date.now() / 1000) | 0) + 15;
-  for (const marketId in pairs) {
-    const mmConfig = pairs[marketId];
+async function sendOrders(marketId) {
+    const mmConfig = MM_CONFIG.pairs[marketId];
     if (!mmConfig || !mmConfig.active) {
       if(!mmConfig) {
         console.error(`Missing mmConfig for sendOrders ${marketId}`);
       }
-      continue;
+      return;
     }
 
     let price;
@@ -469,7 +475,7 @@ async function sendOrders(pairs = MM_CONFIG.pairs) {
       price = validatePriceFeedMarket(marketId);
     } catch (e) {
       console.error(`Can not sendOrders for ${marketId} because: ${e.message}`);
-      continue;
+      return;
     }
 
     const [baseTokenAddress, quoteTokenAddress] = marketId.split('-')
@@ -477,16 +483,17 @@ async function sendOrders(pairs = MM_CONFIG.pairs) {
     const quoteTokenInfo = TOKEN_INFO[quoteTokenAddress.toLowerCase()]
     if (!baseTokenInfo || !quoteTokenInfo) {
       console.error(`Missing baseTokenInfo or quoteTokenInfo for sendOrders ${marketId}`);
-      continue;
+      return;
     }
 
     const midPrice = mmConfig.invert ? 1 / price : price;
     if (!midPrice) {
       console.error(`Missing midPrice for sendOrders ${marketId}`);
-      continue;
+      return;
     }
 
     const side = mmConfig.side || "d";
+    const expires = mmConfig.expirationTimeSeconds || ((Date.now() / 1000) | 0) + 15;
     const maxBaseBalance = BALANCES[baseTokenAddress].value;
     const maxQuoteBalance = BALANCES[quoteTokenAddress].value;
     const baseBalance = maxBaseBalance / 10 ** baseTokenInfo.decimals;
@@ -542,10 +549,7 @@ async function sendOrders(pairs = MM_CONFIG.pairs) {
           expires
         );
       }
-    }
-  }
-
-  
+    }  
 }
 
 async function sendOrdersVault() {

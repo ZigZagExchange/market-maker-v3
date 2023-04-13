@@ -200,6 +200,10 @@ Example:
 }
 ```
 
+###### expirationTimeSeconds
+`expirationTimeSeconds` is used to let orders expire without the need to cancel them on chain. The minimum is 12.5 seconds to allow for enough time to process trades on chain. By adding a larger number, others have more time to fill the order.
+
+
 ## Vaults
 
 Vaults offer a oportunity for users to deposit assets to a Vault contract. Each Vault has a manager that can market make for that Vault. The profits from that will be shared between all depositors. For this first version (V0) only ZigZag will be allowed to operate a Vault. Later we will add public Vaults.
