@@ -93,12 +93,12 @@ if (VAULT_TOKEN_ADDRESS) {
 }
 
 for (const marketId in MM_CONFIG.pairs) {
-  const pairConfig = pairs[marketId];
+  const pairConfig = MM_CONFIG.pairs[marketId];
   const expires = Math.max(pairConfig.expirationTimeSeconds || 30, 12.5)
 
   // the FE uses a 10 sec min to fetch new orders
   const interval = expires - 10.5;
-  if (pairConfig.active) setInterval(sendOrders, interval * 1000);
+  if (pairConfig.active) setInterval(sendOrders, interval * 1000, marketId);
 }
 
 setInterval(getExchangeInfo, 1 * 60 * 1000);
