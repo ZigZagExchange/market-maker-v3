@@ -493,7 +493,7 @@ async function sendOrders(marketId) {
     }
 
     const side = mmConfig.side || "d";
-    const expires = mmConfig.expirationTimeSeconds || ((Date.now() / 1000) | 0) + 15;
+    const expires = ((Date.now() / 1000) | 0) + Math.max(pairConfig.expirationTimeSeconds || 30, 12.5);
     const maxBaseBalance = BALANCES[baseTokenAddress].value;
     const maxQuoteBalance = BALANCES[quoteTokenAddress].value;
     const baseBalance = maxBaseBalance / 10 ** baseTokenInfo.decimals;
