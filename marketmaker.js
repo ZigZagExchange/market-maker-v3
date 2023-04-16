@@ -14,6 +14,9 @@ const UNISWAP_V3_PROVIDERS = {};
 const TOKEN_INFO = {};
 let EXCHANGE_INFO = {};
 
+const DEFAULT_EXPIRY = 30
+const MIN_EXPIRY = 15
+
 let uniswap_error_counter = 0;
 let chainlink_error_counter = 0;
 
@@ -94,11 +97,14 @@ if (VAULT_TOKEN_ADDRESS) {
 
 for (const marketId in MM_CONFIG.pairs) {
   const pairConfig = MM_CONFIG.pairs[marketId];
-  const expires = Math.max(pairConfig.expirationTimeSeconds || 30, 12.5)
+  const expires = Math.max(pairConfig.expirationTimeSeconds || DEFAULT_EXPIRY, MIN_EXPIRY)
 
   // the FE uses a 10 sec min to fetch new orders
-  const interval = expires - 10.5;
-  if (pairConfig.active) setInterval(sendOrders, interval * 1000, marketId);
+  const interval = expires - 12.25;
+  if (pairConfig.active) {
+    sendOrders(marketId)
+    setInterval(sendOrders, interval * 1000, marketId);
+  }
 }
 
 setInterval(getExchangeInfo, 1 * 60 * 1000);
@@ -462,10 +468,10 @@ async function uniswapV3Update() {
 }
 
 async function sendOrders(marketId) {
-    const mmConfig = MM_CONFIG.pairs[marketId];
-    if (!mmConfig || !mmConfig.active) {
-      if(!mmConfig) {
-        console.error(`Missing mmConfig for sendOrders ${marketId}`);
+    const pairConfig = MM_CONFIG.pairs[marketId];
+    if (!pairConfig || !pairConfig.active) {
+      if(!pairConfig) {
+        console.error(`Missing pairConfig for ${marketId}`);
       }
       return;
     }
@@ -486,20 +492,20 @@ async function sendOrders(marketId) {
       return;
     }
 
-    const midPrice = mmConfig.invert ? 1 / price : price;
+    const midPrice = pairConfig.invert ? 1 / price : price;
     if (!midPrice) {
       console.error(`Missing midPrice for sendOrders ${marketId}`);
       return;
     }
 
-    const side = mmConfig.side || "d";
-    const expires = ((Date.now() / 1000) | 0) + Math.max(pairConfig.expirationTimeSeconds || 30, 12.5);
+    const side = pairConfig.side || "d";
+    const expires = ((Date.now() / 1000) | 0) + Math.max(pairConfig.expirationTimeSeconds || DEFAULT_EXPIRY, MIN_EXPIRY);
     const maxBaseBalance = BALANCES[baseTokenAddress].value;
     const maxQuoteBalance = BALANCES[quoteTokenAddress].value;
     const baseBalance = maxBaseBalance / 10 ** baseTokenInfo.decimals;
     const quoteBalance = maxQuoteBalance / 10 ** quoteTokenInfo.decimals;
-    const maxSellSize = Math.min(baseBalance, mmConfig.maxSize);
-    const maxBuySize = Math.min(quoteBalance / midPrice, mmConfig.maxSize);
+    const maxSellSize = Math.min(baseBalance, pairConfig.maxSize);
+    const maxBuySize = Math.min(quoteBalance / midPrice, pairConfig.maxSize);
 
     // dont do splits if under 1000 USD
     const usdBaseBalance = baseBalance * baseTokenInfo.usdPrice;
@@ -507,11 +513,11 @@ async function sendOrders(marketId) {
     let buySplits =
       usdQuoteBalance && usdQuoteBalance < 1000
         ? 1
-        : mmConfig.numOrdersIndicated || 1;
+        : pairConfig.numOrdersIndicated || 1;
     let sellSplits =
       usdBaseBalance && usdBaseBalance < 1000
         ? 1
-        : mmConfig.numOrdersIndicated || 1;
+        : pairConfig.numOrdersIndicated || 1;
 
     if (usdQuoteBalance && usdQuoteBalance < 10 * buySplits)
       buySplits = Math.floor(usdQuoteBalance / 10);
@@ -522,8 +528,8 @@ async function sendOrders(marketId) {
       const buyPrice =
         midPrice *
         (1 -
-          mmConfig.minSpread -
-          (mmConfig.slippageRate * maxBuySize * i) / buySplits);
+          pairConfig.minSpread -
+          (pairConfig.slippageRate * maxBuySize * i) / buySplits);
       if (["b", "d"].includes(side)) {
         signAndSendOrder(
           marketId,
@@ -538,8 +544,8 @@ async function sendOrders(marketId) {
       const sellPrice =
         midPrice *
         (1 +
-          mmConfig.minSpread +
-          (mmConfig.slippageRate * maxSellSize * i) / sellSplits);
+          pairConfig.minSpread +
+          (pairConfig.slippageRate * maxSellSize * i) / sellSplits);
       if (["s", "d"].includes(side)) {
         signAndSendOrder(
           marketId,
