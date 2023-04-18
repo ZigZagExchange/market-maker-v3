@@ -74,6 +74,14 @@ if (CHAIN_ID === 42161) {
   rollupProvider = new ethers.providers.JsonRpcProvider(
     "https://goerli-rollup.arbitrum.io/rpc"
   );
+} else {
+  throw new Error('Missing chainid, use "zigzagChainId": ')
+}
+
+try {
+  await rollupProvider.ready
+} catch (err) {
+  throw new Error(`Cant connect rollup provider: ${err}`)
 }
 
 const pKey = MM_CONFIG.ethPrivKey
