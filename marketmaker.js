@@ -14,7 +14,7 @@ const UNISWAP_V3_PROVIDERS = {};
 const TOKEN_INFO = {};
 let EXCHANGE_INFO = {};
 
-const DEFAULT_EXPIRY = 30
+const DEFAULT_EXPIRY = 15
 const MIN_EXPIRY = 15
 
 let uniswap_error_counter = 0;
