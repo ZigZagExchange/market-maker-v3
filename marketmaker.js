@@ -59,6 +59,11 @@ console.log("ACTIVE PAIRS", activePairs);
 const infuraID = MM_CONFIG.infura ? MM_CONFIG.infura : process.env.INFURA;
 
 const ethersProvider = new ethers.providers.InfuraProvider("mainnet", infuraID);
+try {
+  await ethersProvider.ready
+} catch (err) {
+  throw new Error(`Cant connect provider: ${err}`)
+}
 
 let rollupProvider = null;
 if (CHAIN_ID === 42161) {
@@ -654,7 +659,11 @@ async function signAndSendOrder(
     quoteTokenInfo.decimals
   );
 
-  let sellToken, buyToken, sellAmountBN, buyAmountBN, balanceBN;
+  let sellToken;
+  let buyToken;
+  let sellAmountBN;
+  let buyAmountBN;
+  let balanceBN = ethers.constants.Zero;
   if (side === "s") {
     sellToken = baseTokenInfo.address.toLowerCase();
     buyToken = quoteTokenInfo.address.toLowerCase();
