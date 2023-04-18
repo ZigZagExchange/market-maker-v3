@@ -79,6 +79,7 @@ if (CHAIN_ID === 42161) {
 const pKey = MM_CONFIG.ethPrivKey
   ? MM_CONFIG.ethPrivKey
   : process.env.ETH_PRIVKEY;
+if (!pKey) throw new Error('Missing private key!')
 const WALLET = new ethers.Wallet(pKey, rollupProvider).connect(rollupProvider);
 const VAULT_CONTRACT = VAULT_TOKEN_ADDRESS && new ethers.Contract(VAULT_TOKEN_ADDRESS, VAULTABI, WALLET);
 const [VAULT_DECIMALS] = VAULT_TOKEN_ADDRESS ? await Promise.all([
