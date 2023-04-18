@@ -57,12 +57,23 @@ if (VAULT_TOKEN_ADDRESS) {
 console.log("ACTIVE PAIRS", activePairs);
 
 const infuraID = MM_CONFIG.infura ? MM_CONFIG.infura : process.env.INFURA;
+if (!infuraID) console.warn(`
+  You did not provider an infura key with "infura" inside your config.
+  Connecting with the default RPC.
+  This might cause the bot to crash (esp. if you run more then one bot.)
+`)
 
 const ethersProvider = new ethers.providers.InfuraProvider("mainnet", infuraID);
-try {
-  await ethersProvider.ready
-} catch (err) {
-  throw new Error(`Cant connect provider: ${err}`)
+const resProvider = await Promise.race([
+  ethersProvider.ready,
+  new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Request timed out')), 10_000)
+  })
+])
+
+// check if provider is working
+if (Number(resProvider.chainId) !== 1) {
+  throw new Error(`Cant connect provider, use "infura" in the config to add an infura id`)
 }
 
 let rollupProvider = null;
@@ -77,11 +88,16 @@ if (CHAIN_ID === 42161) {
 } else {
   throw new Error('Missing chainid, use "zigzagChainId": ')
 }
+const resRollupProvider = await Promise.race([
+  rollupProvider.ready,
+  new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Request timed out')), 10_000)
+  })
+])
 
-try {
-  await rollupProvider.ready
-} catch (err) {
-  throw new Error(`Cant connect rollup provider: ${err}`)
+// check if provider is working
+if (Number(resRollupProvider.chainId) !== CHAIN_ID) {
+  throw new Error(`Cant connect rollup provider`)
 }
 
 const pKey = MM_CONFIG.ethPrivKey
