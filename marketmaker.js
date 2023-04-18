@@ -59,6 +59,11 @@ console.log("ACTIVE PAIRS", activePairs);
 const infuraID = MM_CONFIG.infura ? MM_CONFIG.infura : process.env.INFURA;
 
 const ethersProvider = new ethers.providers.InfuraProvider("mainnet", infuraID);
+try {
+  await ethersProvider.ready
+} catch (err) {
+  throw new Error(`Cant connect provider: ${err}`)
+}
 
 let rollupProvider = null;
 if (CHAIN_ID === 42161) {
@@ -69,11 +74,20 @@ if (CHAIN_ID === 42161) {
   rollupProvider = new ethers.providers.JsonRpcProvider(
     "https://goerli-rollup.arbitrum.io/rpc"
   );
+} else {
+  throw new Error('Missing chainid, use "zigzagChainId": ')
+}
+
+try {
+  await rollupProvider.ready
+} catch (err) {
+  throw new Error(`Cant connect rollup provider: ${err}`)
 }
 
 const pKey = MM_CONFIG.ethPrivKey
   ? MM_CONFIG.ethPrivKey
   : process.env.ETH_PRIVKEY;
+if (!pKey) throw new Error('Missing private key!')
 const WALLET = new ethers.Wallet(pKey, rollupProvider).connect(rollupProvider);
 const VAULT_CONTRACT = VAULT_TOKEN_ADDRESS && new ethers.Contract(VAULT_TOKEN_ADDRESS, VAULTABI, WALLET);
 const [VAULT_DECIMALS] = VAULT_TOKEN_ADDRESS ? await Promise.all([
@@ -654,7 +668,11 @@ async function signAndSendOrder(
     quoteTokenInfo.decimals
   );
 
-  let sellToken, buyToken, sellAmountBN, buyAmountBN, balanceBN;
+  let sellToken;
+  let buyToken;
+  let sellAmountBN;
+  let buyAmountBN;
+  let balanceBN = ethers.constants.Zero;
   if (side === "s") {
     sellToken = baseTokenInfo.address.toLowerCase();
     buyToken = quoteTokenInfo.address.toLowerCase();
