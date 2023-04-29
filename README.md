@@ -41,9 +41,9 @@ node marketmaker.js
 
 ## Configuration Via Environment Variables
 
-It is __recommended__ to use environment variables to set your private keys. Available settings are: `PRIVATE_KEY`, `CRYPTOWATCH_KEY`, `ETHEREUM_RPC` and `ARBITRUM_RPC`. You can enter them like regular environment variables or use the .env like its shown in the .env.EXAMPLE. Past the keys after the corresponding line. Dont use any semicolons or quotes.  
+It is __recommended__ to use environment variables to set your private keys. Available settings are: `PRIVATE_KEY`, `CRYPTOWATCH_KEY`, `ETHEREUM_RPC` and `ARBITRUM_RPC`. You can enter them like regular environment variables or use the .env like its shown in the .env.EXAMPLE. Paste the keys after the corresponding line. Dont use any semicolons or quotes.  
 
-If your hosting service requires you to pass in configs via environment variables you can compress `config.json`:
+If your hosting service requires you to pass in configs via environment variables, you can compress `config.json`:
 
 ```
 cat config.json | tr -d ' ' | tr -d '\n'
