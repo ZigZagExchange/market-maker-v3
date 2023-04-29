@@ -1,6 +1,8 @@
 {
   "zigzagChainId": 42161,
   "zigzagHttps": "https://api.arbitrum.zigzag.exchange",
+  "ethereumRPC": "https://mainnet.infura.io/v3/__your_key - or use .env__",
+  "arbitrumRPC": "https://arb-mainnet.g.alchemy.com/v2/__your_key - or use .env__",
   "vault": {
     "address": "0xF4037F59C92c9893C43c2372286699430310CFe7",
     "depositFee": 0,

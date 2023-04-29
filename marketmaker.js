@@ -13,6 +13,8 @@ const CHAINLINK_PROVIDERS = {};
 const UNISWAP_V3_PROVIDERS = {};
 const TOKEN_INFO = {};
 let EXCHANGE_INFO = {};
+let EXCHANGE_CONTRACT = null;
+const filledOrderHashes = [];
 
 const DEFAULT_EXPIRY = 15
 const MIN_EXPIRY = 15
@@ -22,6 +24,7 @@ let chainlink_error_counter = 0;
 
 const ERC20ABI = JSON.parse(fs.readFileSync("ABIs/ERC20.abi"));
 const VAULTABI = JSON.parse(fs.readFileSync("ABIs/ZigZagVault.abi"));
+const EXCHANGEABI = JSON.parse(fs.readFileSync("ABIs/ZigZagExchange.abi"));
 
 // Load MM config
 let MM_CONFIG;
@@ -33,6 +36,10 @@ if (process.env.MM_CONFIG) {
 }
 
 const CHAIN_ID = parseInt(MM_CONFIG.zigzagChainId);
+if (![42161, 421613].includes(CHAIN_ID)) {
+  throw new Error(`You can not run this bot on chainId: ${CHAIN_ID}!`)
+}
+
 const VAULT_TOKEN_ADDRESS = MM_CONFIG.vault && MM_CONFIG.vault.address;
 const VAULT_DEPOSIT_TOKENS = VAULT_TOKEN_ADDRESS ? Object.keys(MM_CONFIG.vault.depositTokens) : [];
 const VAULT_DEPOSIT_FEE = VAULT_TOKEN_ADDRESS ? MM_CONFIG.vault.depositFee : 0.01; // default != 0 to prevent arb
@@ -56,14 +63,21 @@ if (VAULT_TOKEN_ADDRESS) {
 }
 console.log("ACTIVE PAIRS", activePairs);
 
-const infuraID = MM_CONFIG.infura ? MM_CONFIG.infura : process.env.INFURA;
-if (!infuraID) console.warn(`
-  You did not provider an infura key with "infura" inside your config.
-  Connecting with the default RPC.
-  This might cause the bot to crash (esp. if you run more then one bot.)
-`)
-
-const ethersProvider = new ethers.providers.InfuraProvider("mainnet", infuraID);
+// setup L1 provider
+const infuraID = MM_CONFIG.infura || process.env.INFURA;
+const ethereumRPC = MM_CONFIG.ethereumRPC || process.env.ETHEREUM_RPC;
+let ethersProvider
+if (infuraID) {
+  ethersProvider = new ethers.providers.InfuraProvider("mainnet", infuraID);
+} else if (ethereumRPC) {
+  ethersProvider = new ethers.providers.JsonRpcProvider(ethereumRPC);
+} else {
+  throw new Error(`
+    You did not provider an rpc url with "ethereumRPC" inside your config
+    or with ETHEREUM_RPC in the environment variables.
+    Please add a custom one. There are some providers with free plans.`
+  )
+}
 const resProvider = await Promise.race([
   ethersProvider.ready,
   new Promise((_, reject) => {
@@ -76,17 +90,29 @@ if (Number(resProvider.chainId) !== 1) {
   throw new Error(`Cant connect provider, use "infura" in the config to add an infura id`)
 }
 
-let rollupProvider = null;
-if (CHAIN_ID === 42161) {
-  rollupProvider = new ethers.providers.JsonRpcProvider(
-    "https://arb1.arbitrum.io/rpc"
-  );
-} else if (CHAIN_ID === 421613) {
-  rollupProvider = new ethers.providers.JsonRpcProvider(
-    "https://goerli-rollup.arbitrum.io/rpc"
-  );
+// setup rollup provider
+const arbitrumRPC = MM_CONFIG.arbitrumRPC || process.env.ARBITRUM_RPC;
+let rollupProvider
+if (arbitrumRPC) {
+  rollupProvider = new ethers.providers.JsonRpcProvider(arbitrumRPC);
 } else {
-  throw new Error('Missing chainid, use "zigzagChainId": ')
+  console.warn(`
+    You did not provider an rpc url with "arbitrumRPC" inside your config
+    or with ARBITRUM_RPC in the environment variables.
+    Using a public RPC for now, this might cause the bot to be slow filling trades
+    or crash occasionally. 
+    Please add a custom RPC. There are some providers with free plans.`
+  )
+
+  if (CHAIN_ID === 42161) {
+    rollupProvider = new ethers.providers.JsonRpcProvider(
+      "https://arb1.arbitrum.io/rpc"
+    );
+  } else if (CHAIN_ID === 421613) {
+    rollupProvider = new ethers.providers.JsonRpcProvider(
+      "https://goerli-rollup.arbitrum.io/rpc"
+    );
+  }
 }
 const resRollupProvider = await Promise.race([
   rollupProvider.ready,
@@ -100,15 +126,15 @@ if (Number(resRollupProvider.chainId) !== CHAIN_ID) {
   throw new Error(`Cant connect rollup provider`)
 }
 
-const pKey = MM_CONFIG.ethPrivKey
-  ? MM_CONFIG.ethPrivKey
-  : process.env.ETH_PRIVKEY;
+// setup wallet
+const pKey = MM_CONFIG.ethPrivKey || process.env.ETH_PRIVKEY || process.env.PRIVATE_KEY;
 if (!pKey) throw new Error('Missing private key!')
 const WALLET = new ethers.Wallet(pKey, rollupProvider).connect(rollupProvider);
 const VAULT_CONTRACT = VAULT_TOKEN_ADDRESS && new ethers.Contract(VAULT_TOKEN_ADDRESS, VAULTABI, WALLET);
 const [VAULT_DECIMALS] = VAULT_TOKEN_ADDRESS ? await Promise.all([
   VAULT_CONTRACT.decimals()
 ]) : [0, 0];
+
 
 // Start price feeds
 await setupPriceFeeds();
@@ -134,6 +160,13 @@ for (const marketId in MM_CONFIG.pairs) {
   if (pairConfig.active) {
     sendOrders(marketId)
     setInterval(sendOrders, interval * 1000, marketId);
+
+    // only try to fill order if minimumProfit is set
+    const minProfit = Number(pairConfig.minimumProfit)
+    if (minProfit) {
+      checkOrders(marketId)
+      setInterval(checkOrders, 10000, marketId);
+    }
   }
 }
 
@@ -146,6 +179,7 @@ async function getExchangeInfo() {
     const result = await response.json();
 
     EXCHANGE_INFO = result.exchange;
+    EXCHANGE_CONTRACT = new ethers.Contract(EXCHANGE_INFO.exchangeAddress, EXCHANGEABI, WALLET)
   } catch (e) {
     console.error(`Failed to getExchangeInfo, because: ${e.message}`)
     throw new Error(e)
@@ -160,6 +194,10 @@ async function getTokenInfo(activePairs) {
       const tokenAddress = tokens[j];
       if (TOKEN_INFO[tokenAddress.toLowerCase()]) continue
       try {
+        if (tokenAddress.length !== 42) {
+          console.error(`Token address does not match expected length.\nMake sure the the pairs inside the config are declared using their full address.
+          `)
+        }
         const contract = new ethers.Contract(tokenAddress, ERC20ABI, rollupProvider);
         const [decimalsRes, nameRes, symbolRes] = await Promise.all([
           contract.decimals(),
@@ -306,8 +344,7 @@ async function setupPriceFeeds() {
 
 async function cryptowatchWsSetup(cryptowatchMarketIds) {
   // Set initial prices
-  const cryptowatchApiKey =
-    process.env.CRYPTOWATCH_API_KEY || MM_CONFIG.cryptowatchApiKey;
+  const cryptowatchApiKey = process.env.CRYPTOWATCH_API_KEY || MM_CONFIG.cryptowatchApiKey || process.env.CRYPTOWATCH_KEY;
   const cryptowatchMarkets = await fetch(
     "https://api.cryptowat.ch/markets?apikey=" + cryptowatchApiKey
   ).then((r) => r.json());
@@ -498,94 +535,94 @@ async function uniswapV3Update() {
 }
 
 async function sendOrders(marketId) {
-    const pairConfig = MM_CONFIG.pairs[marketId];
-    if (!pairConfig || !pairConfig.active) {
-      if(!pairConfig) {
-        console.error(`Missing pairConfig for ${marketId}`);
-      }
-      return;
+  const pairConfig = MM_CONFIG.pairs[marketId];
+  if (!pairConfig || !pairConfig.active) {
+    if (!pairConfig) {
+      console.error(`Missing pairConfig for ${marketId}`);
     }
+    return;
+  }
 
-    let price;
-    try {
-      price = validatePriceFeedMarket(marketId);
-    } catch (e) {
-      console.error(`Can not sendOrders for ${marketId} because: ${e.message}`);
-      return;
+  let price;
+  try {
+    price = validatePriceFeedMarket(marketId);
+  } catch (e) {
+    console.error(`Can not sendOrders for ${marketId} because: ${e.message}`);
+    return;
+  }
+
+  const [baseTokenAddress, quoteTokenAddress] = marketId.split('-')
+  const baseTokenInfo = TOKEN_INFO[baseTokenAddress.toLowerCase()]
+  const quoteTokenInfo = TOKEN_INFO[quoteTokenAddress.toLowerCase()]
+  if (!baseTokenInfo || !quoteTokenInfo) {
+    console.error(`Missing baseTokenInfo or quoteTokenInfo for sendOrders ${marketId}`);
+    return;
+  }
+
+  const midPrice = pairConfig.invert ? 1 / price : price;
+  if (!midPrice) {
+    console.error(`Missing midPrice for sendOrders ${marketId}`);
+    return;
+  }
+
+  const side = pairConfig.side || "d";
+  const expires = ((Date.now() / 1000) | 0) + Math.max(pairConfig.expirationTimeSeconds || DEFAULT_EXPIRY, MIN_EXPIRY);
+  const maxBaseBalance = BALANCES[baseTokenAddress].value;
+  const maxQuoteBalance = BALANCES[quoteTokenAddress].value;
+  const baseBalance = maxBaseBalance / 10 ** baseTokenInfo.decimals;
+  const quoteBalance = maxQuoteBalance / 10 ** quoteTokenInfo.decimals;
+  const maxSellSize = Math.min(baseBalance, pairConfig.maxSize);
+  const maxBuySize = Math.min(quoteBalance / midPrice, pairConfig.maxSize);
+
+  // dont do splits if under 1000 USD
+  const usdBaseBalance = baseBalance * baseTokenInfo.usdPrice;
+  const usdQuoteBalance = quoteBalance * quoteTokenInfo.usdPrice;
+  let buySplits =
+    usdQuoteBalance && usdQuoteBalance < 1000
+      ? 1
+      : pairConfig.numOrdersIndicated || 1;
+  let sellSplits =
+    usdBaseBalance && usdBaseBalance < 1000
+      ? 1
+      : pairConfig.numOrdersIndicated || 1;
+
+  if (usdQuoteBalance && usdQuoteBalance < 10 * buySplits)
+    buySplits = Math.floor(usdQuoteBalance / 10);
+  if (usdBaseBalance && usdBaseBalance < 10 * sellSplits)
+    sellSplits = Math.floor(usdBaseBalance / 10);
+
+  for (let i = 1; i <= buySplits; i++) {
+    const buyPrice =
+      midPrice *
+      (1 -
+        pairConfig.minSpread -
+        (pairConfig.slippageRate * maxBuySize * i) / buySplits);
+    if (["b", "d"].includes(side)) {
+      signAndSendOrder(
+        marketId,
+        "b",
+        buyPrice,
+        maxBuySize / buySplits,
+        expires
+      );
     }
-
-    const [baseTokenAddress, quoteTokenAddress] = marketId.split('-')
-    const baseTokenInfo = TOKEN_INFO[baseTokenAddress.toLowerCase()]
-    const quoteTokenInfo = TOKEN_INFO[quoteTokenAddress.toLowerCase()]
-    if (!baseTokenInfo || !quoteTokenInfo) {
-      console.error(`Missing baseTokenInfo or quoteTokenInfo for sendOrders ${marketId}`);
-      return;
+  }
+  for (let i = 1; i <= sellSplits; i++) {
+    const sellPrice =
+      midPrice *
+      (1 +
+        pairConfig.minSpread +
+        (pairConfig.slippageRate * maxSellSize * i) / sellSplits);
+    if (["s", "d"].includes(side)) {
+      signAndSendOrder(
+        marketId,
+        "s",
+        sellPrice,
+        maxSellSize / sellSplits,
+        expires
+      );
     }
-
-    const midPrice = pairConfig.invert ? 1 / price : price;
-    if (!midPrice) {
-      console.error(`Missing midPrice for sendOrders ${marketId}`);
-      return;
-    }
-
-    const side = pairConfig.side || "d";
-    const expires = ((Date.now() / 1000) | 0) + Math.max(pairConfig.expirationTimeSeconds || DEFAULT_EXPIRY, MIN_EXPIRY);
-    const maxBaseBalance = BALANCES[baseTokenAddress].value;
-    const maxQuoteBalance = BALANCES[quoteTokenAddress].value;
-    const baseBalance = maxBaseBalance / 10 ** baseTokenInfo.decimals;
-    const quoteBalance = maxQuoteBalance / 10 ** quoteTokenInfo.decimals;
-    const maxSellSize = Math.min(baseBalance, pairConfig.maxSize);
-    const maxBuySize = Math.min(quoteBalance / midPrice, pairConfig.maxSize);
-
-    // dont do splits if under 1000 USD
-    const usdBaseBalance = baseBalance * baseTokenInfo.usdPrice;
-    const usdQuoteBalance = quoteBalance * quoteTokenInfo.usdPrice;
-    let buySplits =
-      usdQuoteBalance && usdQuoteBalance < 1000
-        ? 1
-        : pairConfig.numOrdersIndicated || 1;
-    let sellSplits =
-      usdBaseBalance && usdBaseBalance < 1000
-        ? 1
-        : pairConfig.numOrdersIndicated || 1;
-
-    if (usdQuoteBalance && usdQuoteBalance < 10 * buySplits)
-      buySplits = Math.floor(usdQuoteBalance / 10);
-    if (usdBaseBalance && usdBaseBalance < 10 * sellSplits)
-      sellSplits = Math.floor(usdBaseBalance / 10);
-
-    for (let i = 1; i <= buySplits; i++) {
-      const buyPrice =
-        midPrice *
-        (1 -
-          pairConfig.minSpread -
-          (pairConfig.slippageRate * maxBuySize * i) / buySplits);
-      if (["b", "d"].includes(side)) {
-        signAndSendOrder(
-          marketId,
-          "b",
-          buyPrice,
-          maxBuySize / buySplits,
-          expires
-        );
-      }
-    }
-    for (let i = 1; i <= sellSplits; i++) {
-      const sellPrice =
-        midPrice *
-        (1 +
-          pairConfig.minSpread +
-          (pairConfig.slippageRate * maxSellSize * i) / sellSplits);
-      if (["s", "d"].includes(side)) {
-        signAndSendOrder(
-          marketId,
-          "s",
-          sellPrice,
-          maxSellSize / sellSplits,
-          expires
-        );
-      }
-    }  
+  }
 }
 
 async function sendOrdersVault() {
@@ -750,12 +787,148 @@ async function signAndSendOrder(
     }
   } catch (err) {
     console.warn('Failed to send orders')
-  }  
+  }
   const sellTokenInfo = TOKEN_INFO[sellToken.toLowerCase()]
   const buyTokenInfo = TOKEN_INFO[buyToken.toLowerCase()]
-  const sellAmountReadable = Order.sellAmount / 10**sellTokenInfo.decimals;
-  const buyAmountReadable = Order.buyAmount / 10**buyTokenInfo.decimals;
-  console.log("Sell", sellAmountReadable, sellTokenInfo.symbol, ", Buy", buyAmountReadable, buyTokenInfo.symbol, ", Price", buyAmountReadable /  sellAmountReadable, sellAmountReadable / buyAmountReadable);
+  const sellAmountReadable = Order.sellAmount / 10 ** sellTokenInfo.decimals;
+  const buyAmountReadable = Order.buyAmount / 10 ** buyTokenInfo.decimals;
+  console.log("Sell", sellAmountReadable, sellTokenInfo.symbol, ", Buy", buyAmountReadable, buyTokenInfo.symbol, ", Price", buyAmountReadable / sellAmountReadable, sellAmountReadable / buyAmountReadable);
+}
+
+async function checkOrders(marketId) {
+  const pairConfig = MM_CONFIG.pairs[marketId];
+  if (!pairConfig || !pairConfig.active || !pairConfig.minimumProfit) {
+    if (!pairConfig) {
+      console.error(`Missing pairConfig for ${marketId}`);
+    }
+    return;
+  }
+
+  if (!EXCHANGE_CONTRACT) {    
+    console.error(`Missing exchange contract`);
+    return;
+  }
+
+  let price;
+  try {
+    price = validatePriceFeedMarket(marketId);
+  } catch (e) {
+    console.error(`Can not sendOrders for ${marketId} because: ${e.message}`);
+    return;
+  }
+
+  let [baseTokenAddress, quoteTokenAddress] = marketId.split('-');
+  baseTokenAddress = baseTokenAddress.toLowerCase();
+  quoteTokenAddress = quoteTokenAddress.toLowerCase();
+  const baseTokenInfo = TOKEN_INFO[baseTokenAddress];
+  const quoteTokenInfo = TOKEN_INFO[quoteTokenAddress];
+  if (!baseTokenInfo || !quoteTokenInfo) {
+    console.error(`Missing baseTokenInfo or quoteTokenInfo for sendOrders ${marketId}`);
+    return;
+  }
+
+  const midPrice = pairConfig.invert ? 1 / price : price;
+  if (!midPrice) {
+    console.error(`Missing midPrice for sendOrders ${marketId}`);
+    return;
+  }
+
+  let orders
+  try {
+    const response = await fetch(`${MM_CONFIG.zigzagHttps}/v1/orders?buyToken=${baseTokenAddress},${quoteTokenAddress}&sellToken=${baseTokenAddress},${quoteTokenAddress}`);
+    if (response.status !== 200) return;
+
+    const data = await response.json();
+    orders = data.orders;
+  } catch (err) {
+    console.warn('Failed to send orders');
+  }
+
+  if (!orders) return;  
+  const minProfitBase = Number(pairConfig.minimumProfit);
+  const buyOrders = orders.filter(o => (o.order.buyToken === baseTokenAddress && o.order.sellToken === quoteTokenAddress));
+  const sellOrders = orders.filter(o => (o.order.sellToken === baseTokenAddress && o.order.buyToken === quoteTokenAddress));
+
+  const profitableOrders = []
+  const buyOrderPromise = buyOrders.map(orderData => {
+    const buyOrder = orderData.order;
+    const baseAmount = ethers.utils.formatUnits(buyOrder.buyAmount, baseTokenInfo.decimals);
+    const quoteAmount = ethers.utils.formatUnits(buyOrder.sellAmount, quoteTokenInfo.decimals);
+    const orderPrice = quoteAmount / baseAmount;
+    
+    const fillAmountInBase = ethers.BigNumber.from(buyOrder.fillAmount).mul(buyOrder.buyAmount).div(buyOrder.sellAmount);
+    const remainingBuyAmount = ethers.BigNumber.from(buyOrder.buyAmount).sub(fillAmountInBase);
+    const remainingBaseAmount = ethers.utils.formatUnits(remainingBuyAmount, baseTokenInfo.decimals);
+
+    const sellPrice = midPrice * (1 + pairConfig.minSpread + pairConfig.slippageRate * remainingBaseAmount);
+    const balance = BALANCES[baseTokenAddress].value;
+    
+    const possibleProfit = remainingBaseAmount * (orderPrice - sellPrice);
+    if (orderPrice > sellPrice && balance.gt(remainingBuyAmount) && possibleProfit > minProfitBase) {
+      if (!filledOrderHashes.includes(orderData.hash)) {
+        console.log("Found possible buy fill")
+        profitableOrders.push({
+          profit: possibleProfit,
+          orderData: orderData
+        })
+      }
+    }
+  })
+  const sellOrderPromise = sellOrders.map(orderData => {
+    const sellOrder = orderData.order;
+    const baseAmount = ethers.utils.formatUnits(sellOrder.sellAmount, baseTokenInfo.decimals);
+    const quoteAmount = ethers.utils.formatUnits(sellOrder.buyAmount, quoteTokenInfo.decimals);
+    const orderPrice = quoteAmount / baseAmount;
+
+    const remainingBuyAmount = ethers.BigNumber.from(sellOrder.sellAmount).sub(sellOrder.fillAmount);
+    const remainingBaseAmount = ethers.utils.formatUnits(remainingBuyAmount, baseTokenInfo.decimals);
+
+    const buyPrice = midPrice * (1 - pairConfig.minSpread - pairConfig.slippageRate * remainingBaseAmount);
+    const balance = BALANCES[baseTokenAddress].value;
+    
+    const possibleProfit = remainingBaseAmount * (buyPrice - orderPrice);
+    if (orderPrice < buyPrice && balance.gt(remainingBuyAmount) && possibleProfit > minProfitBase) {
+      if (!filledOrderHashes.includes(orderData.hash)) {
+        console.log("Found possible sell fill")
+        profitableOrders.push({
+          profit: possibleProfit,
+          orderData: orderData
+        })
+      }      
+    }
+  })
+
+  await Promise.all([buyOrderPromise, sellOrderPromise]);
+
+  profitableOrders.sort((a, b) => a.possibleProfit - b.possibleProfit);
+  for (let i = 0; i < profitableOrders.length; i++) {
+    try {
+      console.log("starting to fill an order")
+      const orderData = profitableOrders[i].orderData;
+      filledOrderHashes.push(orderData.hash);
+
+      const tx = await EXCHANGE_CONTRACT.fillOrderExactOutput([
+          orderData.order.user,
+          orderData.order.sellToken,
+          orderData.order.buyToken,
+          orderData.order.sellAmount,
+          orderData.order.buyAmount,
+          orderData.order.expirationTimeSeconds,
+        ],
+        orderData.signature,
+        ethers.BigNumber.from(orderData.order.sellAmount).sub(orderData.order.fillAmount),
+        false
+      );
+      const recipt = await tx.wait();
+      if (recipt.status === 1) {
+        console.log(`Filled a crossed order for a estimated profit of ${profitableOrders[i].possibleProfit} ${baseTokenInfo.symbol}`);
+      } else {
+        throw new Error('transaction failed!')
+      }
+    } catch(err) {
+      console.warn(`Failed to send fill order, error: ${err.reason}`)
+    }
+  }
 }
 
 function getTokens() {
