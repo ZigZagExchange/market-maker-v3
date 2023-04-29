@@ -41,7 +41,7 @@ node marketmaker.js
 
 ## Configuration Via Environment Variables
 
-It is __recommended__ to use environment variables to set your private keys. You can set `ETH_PRIVKEY`, `CRYPTOWATCH_API_KEY` and `INFURA_URL` using them. You can set them using `ETH_PRIVKEY=0x____`. For more informations on private keys read [this](https://linuxize.com/post/how-to-set-and-list-environment-variables-in-linux/).
+It is __recommended__ to use environment variables to set your private keys. Available settings are: `PRIVATE_KEY`, `CRYPTOWATCH_KEY`, `ETHEREUM_RPC` and `ARBITRUM_RPC`. You can enter them like regular environment variables or use the .env like its shown in the .env.EXAMPLE. Past the keys after the corresponding line. Dont use any semicolons or quotes.  
 
 If your hosting service requires you to pass in configs via environment variables you can compress `config.json`:
 
@@ -203,6 +203,9 @@ Example:
 ###### expirationTimeSeconds
 `expirationTimeSeconds` is used to let orders expire without the need to cancel them on chain. The minimum is 12.5 seconds to allow for enough time to process trades on chain. By adding a larger number, others have more time to fill the order.
 
+###### minimumProfit
+`minimumProfit` lets you set a minimum value in the base token of that pair, eg. if the pair is WETH-USDC setting it to 0.0005 signals the bot to fill any order that makes more then 0.0005 ETH in profit. Keep in mind that the bot pays for transaction fees on these fill orders. So the value set, should be high enough to make a profit after fees.
+If this value is not set in the config, the bot will not try to fill any order.
 
 ## Vaults
 
