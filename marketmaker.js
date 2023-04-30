@@ -16,8 +16,7 @@ let EXCHANGE_INFO = {};
 let EXCHANGE_CONTRACT = null;
 const filledOrderHashes = [];
 
-const DEFAULT_EXPIRY = 15
-const MIN_EXPIRY = 15
+const DEFAULT_EXPIRY = 15;
 
 let uniswap_error_counter = 0;
 let chainlink_error_counter = 0;
@@ -153,13 +152,11 @@ if (VAULT_TOKEN_ADDRESS) {
 
 for (const marketId in MM_CONFIG.pairs) {
   const pairConfig = MM_CONFIG.pairs[marketId];
-  const expires = Math.max(pairConfig.expirationTimeSeconds || DEFAULT_EXPIRY, MIN_EXPIRY)
+  const expires = pairConfig.expirationTimeSeconds || DEFAULT_EXPIRY
 
-  // the FE uses a 10 sec min to fetch new orders
-  const interval = expires - 12.25;
   if (pairConfig.active) {
     sendOrders(marketId)
-    setInterval(sendOrders, interval * 1000, marketId);
+    setInterval(sendOrders, expires * 1000, marketId);
 
     // only try to fill order if minimumProfit is set
     const minProfit = Number(pairConfig.minimumProfit)
@@ -566,7 +563,7 @@ async function sendOrders(marketId) {
   }
 
   const side = pairConfig.side || "d";
-  const expires = ((Date.now() / 1000) | 0) + Math.max(pairConfig.expirationTimeSeconds || DEFAULT_EXPIRY, MIN_EXPIRY);
+  const expires = ((Date.now() / 1000) | 0) + (pairConfig.expirationTimeSeconds || DEFAULT_EXPIRY);
   const maxBaseBalance = BALANCES[baseTokenAddress].value;
   const maxQuoteBalance = BALANCES[quoteTokenAddress].value;
   const baseBalance = maxBaseBalance / 10 ** baseTokenInfo.decimals;
